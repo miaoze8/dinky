@@ -1,4 +1,23 @@
-package org.dinky.gateway.yarn;
+/*
+ *
+ *  Licensed to the Apache Software Foundation (ASF) under one or more
+ *  contributor license agreements.  See the NOTICE file distributed with
+ *  this work for additional information regarding copyright ownership.
+ *  The ASF licenses this file to You under the Apache License, Version 2.0
+ *  (the "License"); you may not use this file except in compliance with
+ *  the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ */
+
+package org.dinky.gateway.utils;
 
 import org.apache.http.HttpResponse;
 import org.apache.http.auth.AuthSchemeProvider;
@@ -33,7 +52,7 @@ public class RequestKerberosUrlUtils {
     private String principal;
     private String keyTabLocation;
 
-    public RequestKerberosUrlUtils(){}
+    public RequestKerberosUrlUtils() {}
 
     public RequestKerberosUrlUtils(String principal, String keyTabLocation) {
         this.principal = principal;
@@ -50,13 +69,12 @@ public class RequestKerberosUrlUtils {
 
     public RequestKerberosUrlUtils(String principal, String keyTabLocation, String krb5Location, boolean isDebug) {
         this(principal, keyTabLocation, isDebug);
-//        System.setProperty("java.security.krb5.conf", krb5Location);
+        //        System.setProperty("java.security.krb5.conf", krb5Location);
     }
 
     private static HttpClient buildSpengoHttpClient() {
 
-        Lookup<AuthSchemeProvider> authSchemeRegistry = RegistryBuilder
-                .<AuthSchemeProvider>create()
+        Lookup<AuthSchemeProvider> authSchemeRegistry = RegistryBuilder.<AuthSchemeProvider>create()
                 .register(AuthSchemes.SPNEGO, new SPNegoSchemeFactory(true))
                 .build();
 
@@ -73,8 +91,7 @@ public class RequestKerberosUrlUtils {
             }
         });
 
-        CloseableHttpClient  httpClient = HttpClientBuilder
-                .create()
+        CloseableHttpClient httpClient = HttpClientBuilder.create()
                 .setDefaultAuthSchemeRegistry(authSchemeRegistry)
                 .setDefaultCredentialsProvider(credentialsProvider)
                 .build();
@@ -82,17 +99,18 @@ public class RequestKerberosUrlUtils {
     }
 
     public HttpResponse callRestUrl(final String url, final String userId) {
-        logger.warn(String.format("Calling KerberosHttpClient %s %s %s", this.principal, this.keyTabLocation, url));
+        //        logger.warn(String.format("Calling KerberosHttpClient %s %s %s", this.principal, this.keyTabLocation,
+        // url));
         Configuration config = new Configuration() {
             @Override
             public AppConfigurationEntry[] getAppConfigurationEntry(String name) {
-                HashMap<String, Object> options = new HashMap<String, Object>(){
+                HashMap<String, Object> options = new HashMap<String, Object>() {
                     {
                         put("useTicketCache", "false");
                         put("useKeyTab", "true");
                         put("keyTab", keyTabLocation);
-                        //Krb5 in GSS API needs to be refreshed so it does not throw the error
-                        //Specified version of key is not available
+                        // Krb5 in GSS API needs to be refreshed so it does not throw the error
+                        // Specified version of key is not available
                         put("refreshKrb5Config", "true");
                         put("principal", principal);
                         put("storeKey", "true");
@@ -102,9 +120,10 @@ public class RequestKerberosUrlUtils {
                     }
                 };
                 return new AppConfigurationEntry[] {
-                        new AppConfigurationEntry("com.sun.security.auth.module.Krb5LoginModule",
-                                AppConfigurationEntry.LoginModuleControlFlag.REQUIRED,
-                                options)
+                    new AppConfigurationEntry(
+                            "com.sun.security.auth.module.Krb5LoginModule",
+                            AppConfigurationEntry.LoginModuleControlFlag.REQUIRED,
+                            options)
                 };
             }
         };
@@ -112,12 +131,13 @@ public class RequestKerberosUrlUtils {
         princ.add(new KerberosPrincipal(userId));
         Subject sub = new Subject(false, princ, new HashSet<Object>(), new HashSet<Object>());
         try {
-            //auth module：Krb5Login
+            // auth module：Krb5Login
             LoginContext lc = new LoginContext("Krb5Login", sub, null, config);
             lc.login();
             Subject serviceSubject = lc.getSubject();
             return Subject.doAs(serviceSubject, new PrivilegedAction<HttpResponse>() {
                 HttpResponse httpResponse = null;
+
                 @Override
                 public HttpResponse run() {
                     try {
