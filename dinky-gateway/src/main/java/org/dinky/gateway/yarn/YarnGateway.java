@@ -19,38 +19,6 @@
 
 package org.dinky.gateway.yarn;
 
-import cn.hutool.core.collection.CollUtil;
-import cn.hutool.core.collection.CollectionUtil;
-import cn.hutool.core.convert.Convert;
-import cn.hutool.core.io.FileUtil;
-import cn.hutool.core.lang.Assert;
-import cn.hutool.core.util.ReUtil;
-import cn.hutool.core.util.StrUtil;
-import cn.hutool.http.HttpUtil;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.flink.client.deployment.ClusterRetrieveException;
-import org.apache.flink.client.program.ClusterClient;
-import org.apache.flink.configuration.*;
-import org.apache.flink.runtime.jobmanager.HighAvailabilityMode;
-import org.apache.flink.runtime.messages.webmonitor.JobDetails;
-import org.apache.flink.runtime.messages.webmonitor.MultipleJobsDetails;
-import org.apache.flink.runtime.rest.messages.JobsOverviewHeaders;
-import org.apache.flink.runtime.security.SecurityConfiguration;
-import org.apache.flink.runtime.security.SecurityUtils;
-import org.apache.flink.yarn.YarnClientYarnClusterInformationRetriever;
-import org.apache.flink.yarn.YarnClusterClientFactory;
-import org.apache.flink.yarn.YarnClusterDescriptor;
-import org.apache.flink.yarn.configuration.YarnConfigOptions;
-import org.apache.flink.yarn.configuration.YarnLogConfigUtil;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.security.UserGroupInformation;
-import org.apache.hadoop.service.Service;
-import org.apache.hadoop.yarn.api.records.*;
-import org.apache.hadoop.yarn.client.api.YarnClient;
-import org.apache.hadoop.yarn.conf.YarnConfiguration;
-import org.apache.hadoop.yarn.exceptions.YarnException;
-import org.apache.http.HttpResponse;
-import org.apache.zookeeper.ZooKeeper;
 import org.dinky.assertion.Asserts;
 import org.dinky.constant.CustomerConfigureOptions;
 import org.dinky.context.FlinkUdfPathContextHolder;
@@ -69,14 +37,69 @@ import org.dinky.gateway.exception.GatewayException;
 import org.dinky.gateway.result.SavePointResult;
 import org.dinky.gateway.result.TestResult;
 import org.dinky.gateway.result.YarnResult;
+import org.dinky.gateway.utils.RequestKerberosUrlUtils;
 import org.dinky.utils.FlinkJsonUtil;
 import org.dinky.utils.ThreadUtil;
 
-import java.io.*;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.flink.client.deployment.ClusterRetrieveException;
+import org.apache.flink.client.program.ClusterClient;
+import org.apache.flink.configuration.ConfigConstants;
+import org.apache.flink.configuration.CoreOptions;
+import org.apache.flink.configuration.DeploymentOptions;
+import org.apache.flink.configuration.GlobalConfiguration;
+import org.apache.flink.configuration.HighAvailabilityOptions;
+import org.apache.flink.configuration.SecurityOptions;
+import org.apache.flink.runtime.jobmanager.HighAvailabilityMode;
+import org.apache.flink.runtime.messages.webmonitor.JobDetails;
+import org.apache.flink.runtime.messages.webmonitor.MultipleJobsDetails;
+import org.apache.flink.runtime.rest.messages.JobsOverviewHeaders;
+import org.apache.flink.runtime.security.SecurityConfiguration;
+import org.apache.flink.runtime.security.SecurityUtils;
+import org.apache.flink.yarn.YarnClientYarnClusterInformationRetriever;
+import org.apache.flink.yarn.YarnClusterClientFactory;
+import org.apache.flink.yarn.YarnClusterDescriptor;
+import org.apache.flink.yarn.configuration.YarnConfigOptions;
+import org.apache.flink.yarn.configuration.YarnLogConfigUtil;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.security.UserGroupInformation;
+import org.apache.hadoop.service.Service;
+import org.apache.hadoop.yarn.api.records.ApplicationId;
+import org.apache.hadoop.yarn.api.records.ApplicationReport;
+import org.apache.hadoop.yarn.api.records.ContainerReport;
+import org.apache.hadoop.yarn.api.records.FinalApplicationStatus;
+import org.apache.hadoop.yarn.api.records.YarnApplicationState;
+import org.apache.hadoop.yarn.client.api.YarnClient;
+import org.apache.hadoop.yarn.conf.YarnConfiguration;
+import org.apache.hadoop.yarn.exceptions.YarnException;
+import org.apache.zookeeper.ZooKeeper;
+
+import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.ObjectInputStream;
 import java.net.URI;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
+
+import cn.hutool.core.collection.CollUtil;
+import cn.hutool.core.collection.CollectionUtil;
+import cn.hutool.core.convert.Convert;
+import cn.hutool.core.io.FileUtil;
+import cn.hutool.core.lang.Assert;
+import cn.hutool.core.util.ReUtil;
+import cn.hutool.core.util.StrUtil;
+import cn.hutool.http.HttpUtil;
 
 public abstract class YarnGateway extends AbstractGateway {
     private static final String HTML_TAG_REGEX = "<pre>(.*)</pre>";
@@ -86,8 +109,6 @@ public abstract class YarnGateway extends AbstractGateway {
     protected YarnConfiguration yarnConfiguration;
 
     protected YarnClient yarnClient;
-
-    protected SecurityConfiguration securityConfiguration = null;
 
     private static boolean ENABLE_KERBEROS_AUTH = false;
 
@@ -134,9 +155,8 @@ public abstract class YarnGateway extends AbstractGateway {
 
         if (configuration.containsKey(SecurityOptions.KERBEROS_LOGIN_KEYTAB.key())) {
             try {
-                securityConfiguration = new SecurityConfiguration(configuration);
                 ENABLE_KERBEROS_AUTH = true;
-                SecurityUtils.install(securityConfiguration);
+                SecurityUtils.install(new SecurityConfiguration(configuration));
                 UserGroupInformation currentUser = UserGroupInformation.getCurrentUser();
                 logger.info(
                         "Security authentication completed, user and authentication method:{}", currentUser.toString());
@@ -365,7 +385,8 @@ public abstract class YarnGateway extends AbstractGateway {
                 true);
     }
 
-    protected String getWebUrl(ClusterClient<ApplicationId> clusterClient, YarnResult result) throws Exception {
+    protected String getWebUrl(ClusterClient<ApplicationId> clusterClient, YarnResult result)
+            throws YarnException, IOException, InterruptedException {
         String webUrl;
         int counts = SystemConfiguration.getInstances().GetJobIdWaitValue();
         while (yarnClient.getApplicationReport(clusterClient.getClusterId()).getYarnApplicationState()
@@ -391,17 +412,16 @@ public abstract class YarnGateway extends AbstractGateway {
                     + JobsOverviewHeaders.URL.substring(1);
 
             // 访问Flink WebUI 增加Kerberos认证调用HTTP API
-            //----------------开始----------------------------
+            // ----------------开始----------------------------
             String json = null;
-            logger.info("ENABLE_KERBEROS_AUTH:"+ENABLE_KERBEROS_AUTH);
-            HttpResponse httpResponse = null;
+            logger.info("ENABLE_KERBEROS_AUTH:" + ENABLE_KERBEROS_AUTH);
+            org.apache.http.HttpResponse httpResponse = null;
             if (ENABLE_KERBEROS_AUTH) {
                 logger.info(
                         "you are using kerberos authentication, please make sure you have kinit, now start to login");
-//                SecurityUtils.install(securityConfiguration);
                 String principal = configuration.get(SecurityOptions.KERBEROS_LOGIN_PRINCIPAL);
                 String keytab = configuration.get(SecurityOptions.KERBEROS_LOGIN_KEYTAB);
-                logger.info("认证凭证 principal:"+principal +"||keytab:"+keytab);
+                logger.info("认证凭证 principal:" + principal + "||keytab:" + keytab);
                 BufferedReader in = null;
                 try {
                     RequestKerberosUrlUtils restTest = new RequestKerberosUrlUtils(principal, keytab, null, false);
@@ -410,26 +430,26 @@ public abstract class YarnGateway extends AbstractGateway {
                     in = new BufferedReader(new InputStreamReader(inputStream, "UTF-8"));
                     String str = null;
                     while ((str = in.readLine()) != null) {
-                        logger.info("返回Flink Web API结果:"+ str);
+                        logger.info("返回Flink Web API结果:" + str);
                         json = str;
                     }
                     if (httpResponse.getStatusLine().getStatusCode() != 200) {
-                        logger.info("认证失败:"+httpResponse.getEntity().getContent().toString());
+                        logger.info(
+                                "认证失败:" + httpResponse.getEntity().getContent().toString());
                         throw new RuntimeException(String.format(
                                 "Failed to get job details, please check yarn cluster status. Web URL is: %s the job tracking url is: %s",
                                 webUrl, url));
                     }
-                }catch (Exception e) {
-                    logger.info("认证失败:"+e.getMessage());
+                } catch (Exception e) {
+                    logger.info("认证失败:" + e.getMessage());
                     e.printStackTrace();
                 }
                 logger.info("kerberos authentication login successfully and start to get job details");
-            }else {
+            } else {
                 json = HttpUtil.get(url);
             }
-
             // 访问Flink WebUI 增加Kerberos认证调用HTTP API
-            //----------------结束----------------------------
+            // ----------------结束----------------------------
             try {
                 MultipleJobsDetails jobsDetails = FlinkJsonUtil.toBean(json, JobsOverviewHeaders.getInstance());
                 jobDetailsList.addAll(jobsDetails.getJobs());
