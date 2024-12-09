@@ -386,7 +386,7 @@ public abstract class YarnGateway extends AbstractGateway {
         String webUrl;
         int counts = SystemConfiguration.getInstances().GetJobIdWaitValue();
         while (yarnClient.getApplicationReport(clusterClient.getClusterId()).getYarnApplicationState()
-                == YarnApplicationState.ACCEPTED
+                        == YarnApplicationState.ACCEPTED
                 && counts-- > 0) {
             Thread.sleep(1000);
         }
@@ -403,8 +403,8 @@ public abstract class YarnGateway extends AbstractGateway {
             // 睡眠1秒，防止flink因为依赖或其他问题导致任务秒挂
             Thread.sleep(1000);
             String url = yarnClient
-                    .getApplicationReport(clusterClient.getClusterId())
-                    .getTrackingUrl()
+                            .getApplicationReport(clusterClient.getClusterId())
+                            .getTrackingUrl()
                     + JobsOverviewHeaders.URL.substring(1);
 
             String json = HttpUtil.get(url);
@@ -470,8 +470,8 @@ public abstract class YarnGateway extends AbstractGateway {
         // Wait for up to 2.5 s. If the history log is not found yet, a prompt message will be returned.
         int counts = 5;
         while (yarnClient
-                .getContainers(applicationReport.getCurrentApplicationAttemptId())
-                .isEmpty()
+                        .getContainers(applicationReport.getCurrentApplicationAttemptId())
+                        .isEmpty()
                 && counts-- > 0) {
             ThreadUtil.sleep(500);
         }
